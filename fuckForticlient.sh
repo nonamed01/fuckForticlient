@@ -126,6 +126,8 @@ mkdir -p "$CACHE_PATH"
 COOKIE_PATH=$CACHE_PATH/svpncookie
 PROFILE_PATH=$CACHE_PATH/profile
 
+WAITRENEWAL=0
+
 #####################################################################################
 # Colors
 #####################################################################################
@@ -259,19 +261,22 @@ getCookie(){
 	# Storage file where the cookie is stored in firefox:
 	storage="$1"
 	waitForIt=$2
+  waitRenewal=$3
 	# We save the current umask value first:
 	curUmask=`umask`
 	# We change it to 0077:
 	umask 077
-	# We try to grab the cookie right away:
-	c=`lz4jsoncat ${storage}/recovery.jsonlz4 2>/dev/null|jq '.cookies[]|select(.name!=null)|select(.name|contains("SVPNCOOKIE"))|.value'`
-	if [ ! -z "$c" ]; then
-		echo "SVPNCOOKIE=${c}" > ${COOKIE_PATH}
-		sed -i 's/\"//g' ${COOKIE_PATH}
-		# We restore umask:
-		umask $curUmask
-		return 0
-	fi
+  if [ $waitRenewal -eq 0 ]; then
+    # We try to grab the cookie right away:
+    c=`lz4jsoncat ${storage}/recovery.jsonlz4 2>/dev/null|jq '.cookies[]|select(.name!=null)|select(.name|contains("SVPNCOOKIE"))|.value'`
+    if [ ! -z "$c" ]; then
+      echo "SVPNCOOKIE=${c}" > ${COOKIE_PATH}
+      sed -i 's/\"//g' ${COOKIE_PATH}
+      # We restore umask:
+      umask $curUmask
+      return 0
+    fi
+  fi
 	# We only wait if waitForIt == 1
 	test $waitForIt -eq 0 && return 1
 	# We will wait until the cookie is already there...
@@ -309,6 +314,7 @@ usage(){
 		 "\t-p PATH Overrides the detection of the Firefox Profile to use.\n"  \
 		 "\t-P Saves chosen Firefox Profile (-p) as the default one.\n"  \
 		 "\t-t SECONDS Sets the timeout to wait for the SVPNCOOKIE cookie to SECONDS.\n" \
+		 "\t-r wait for SVPNCOOKIE cookie renewal.\n" \
 		 "\t-v Shows the SVPNCOOKIE cookie on screen.\n" \
 		 "\t-S SERVER Authenticates against VPN server SERVER .\n" \
 		 "\t-U PATH Overwrites the default PATH to use for SAML.\n" \
@@ -513,7 +519,7 @@ echo -e "[*] SAML path: ${clGreen}${URL} "
 echo -en "${clNone}"
 
 # Process arguments:
-while getopts "Licshut:p:PvdDS:U:" opt; do
+while getopts "rLicshut:p:PvdDS:U:" opt; do
 	case "$opt" in
 		# Shows usage message and exits:
 		h)
@@ -595,6 +601,11 @@ while getopts "Licshut:p:PvdDS:U:" opt; do
 		t)
 			TIMEOUT=$OPTARG
 		;;
+    r)
+        echo -e "[*]${clYellow} Waiting SVPNCOOKIE renewal!${clNone}"
+        WAITRENEWAL=1
+        set -x
+    ;;
 		# Overrides SERVER and tries to authenticate against -S SERVER:
 		S)
 			SERVER="$OPTARG"
@@ -630,7 +641,7 @@ while getopts "Licshut:p:PvdDS:U:" opt; do
 			echo -e "[*] Firefox profile: ${clRed}$fProfile"
             echo -ne "${clNone}"
 			echo "[*] Trying to re-use a previous SVPNCOOKIE..."
-			getCookie "$fProfile" "0"
+			getCookie "$fProfile" "0" 0
 			if [ ! $? -eq 0 ]; then
 				echo "[!] Unable to get SVPNCOOKIE; aborting..."
 				exit 0
@@ -671,7 +682,7 @@ while getopts "Licshut:p:PvdDS:U:" opt; do
 			# in which case it's immediately there.
 			echo -e "[*] Waiting up to ${clRed}$TIMEOUT seconds${clNone} until the cookie appears..."
 			# Gets the cookie:
-			getCookie "$fProfile" "1"
+			getCookie "$fProfile" "1" $WAITRENEWAL
 			if [ ! $? -eq 0 ]; then
 				echo "[!] Unable to get SVPNCOOKIE; aborting..."
 				exit 0
